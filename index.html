@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="フォーム比較">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#0b7a64">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="apple-touch-icon.png">
+<style>:root{padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>フォーム比較プレーヤー</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;700;900&family=DM+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: two panes side by side (左 / 右), each with its own video, seek bar and frame controls. One shared bar below drives both: play together, speed, frame step, align-from-mark, side-by-side capture. */
+:root {
+  --bg: #eef1ef;
+  --surface: #ffffff;
+  --stage: #0d1413;
+  --fg: #16201e;
+  --muted: #5d6d69;
+  --line: #d3dcd9;
+  --accent: #0b7a64;
+  --accent-fg: #ffffff;
+  --warm: #d4551f;
+  --warm-fg: #ffffff;
+  --font-ui: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-num: "DM Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1514; --surface: #182120; --stage: #050908; --fg: #e6efec; --muted: #92a5a0;
+    --line: #2a3835; --accent: #4fd1b0; --accent-fg: #06201a; --warm: #ff8a50; --warm-fg: #2a1002;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1514; --surface: #182120; --stage: #050908; --fg: #e6efec; --muted: #92a5a0;
+  --line: #2a3835; --accent: #4fd1b0; --accent-fg: #06201a; --warm: #ff8a50; --warm-fg: #2a1002;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-ui);
+  padding-block: 18px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  line-height: 1.5; -webkit-tap-highlight-color: transparent;
+}
+main { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+header h1 { font-size: 1.375rem; font-weight: 900; margin: 0; text-wrap: balance; }
+header p { margin: 2px 0 0; color: var(--muted); font-size: .8125rem; }
+
+.panes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.panes.stack { grid-template-columns: 1fr; }
+.bar { display: flex; justify-content: flex-end; }
+.bar button { min-height: 36px; font-size: .75rem; padding: 4px 12px; }
+.pane { min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.pane-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.pane-head h2 { margin: 0; font-size: 1rem; font-weight: 900; }
+.stage { position: relative; background: var(--stage); border-radius: 10px; overflow: hidden; aspect-ratio: 3 / 4; width: 100%; max-height: 72vh; display: grid; place-items: center; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.stage video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.stage.empty { cursor: default; }
+.empty-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 10px; color: #aebdb9; font-size: .8125rem; }
+.rate-badge { position: absolute; top: 6px; right: 6px; font-family: var(--font-num); font-size: .75rem; background: var(--warm); color: var(--warm-fg); border-radius: 99px; padding: 1px 8px; pointer-events: none; }
+
+.times { display: flex; justify-content: space-between; font-family: var(--font-num); font-size: .75rem; color: var(--muted); font-variant-numeric: tabular-nums; gap: 4px; }
+input[type=range] { width: 100%; accent-color: var(--accent); height: 28px; margin: 0; }
+
+button, .filebtn {
+  font: inherit; font-weight: 700; font-size: .8125rem; border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+  border-radius: 10px; min-height: 44px; padding: 4px 6px; cursor: pointer; line-height: 1.2;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+}
+button:active, .filebtn:active { transform: scale(.97); }
+button:disabled { opacity: .4; cursor: default; }
+button:focus-visible, .filebtn:focus-within, input[type=range]:focus-visible, select:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.on { background: var(--warm); color: var(--warm-fg); border-color: var(--warm); }
+.filebtn { position: relative; min-height: 34px; font-size: .75rem; padding: 2px 10px; white-space: nowrap; }
+.filebtn input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+
+.pctl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.markinfo { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: .75rem; color: var(--muted); flex-wrap: wrap; }
+.markinfo span { font-family: var(--font-num); }
+.fpsrow { display: flex; align-items: center; gap: 6px; font-size: .75rem; color: var(--muted); }
+select { font: inherit; font-size: .8125rem; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 3px 6px; }
+
+.master { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.master h2 { margin: 0; font-size: .9375rem; font-weight: 900; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.label { font-size: .75rem; color: var(--muted); margin-bottom: 4px; display: block; }
+.master button { min-height: 50px; font-size: .875rem; }
+
+.shots-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.shots-head h2 { margin: 0; font-size: .9375rem; font-weight: 900; }
+.shots-head span { color: var(--muted); font-size: .75rem; }
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.shot.wide { grid-column: 1 / -1; }
+.savebtn { min-height: 44px; }
+.seqrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.seqrow select { min-height: 50px; width: 100%; font-size: .875rem; }
+.seqrow button { grid-column: 1 / -1; }
+.shot { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.shot img { width: 100%; border-radius: 10px; border: 1px solid var(--line); display: block; }
+.shot figcaption { font-family: var(--font-num); font-size: .75rem; color: var(--muted); }
+.noshots { color: var(--muted); font-size: .8125rem; margin: 0; }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }
+</style>
+
+<main>
+  <header>
+    <h1>フォーム比較プレーヤー</h1>
+    <p>左右に動画を並べて、フォームを見比べます。</p>
+  </header>
+
+  <div class="bar"><button id="layoutBtn">動画を大きく（上下に並べる）</button></div>
+
+  <div class="panes" id="panes">
+    <section class="pane" data-side="左">
+      <div class="pane-head">
+        <h2>左</h2>
+        <label class="filebtn">動画を選ぶ<input type="file" accept="video/*"></label>
+      </div>
+      <div class="stage empty"><video playsinline webkit-playsinline muted preload="auto"></video><div class="empty-note">動画を選んでください</div><div class="rate-badge" hidden>1x</div></div>
+      <input type="range" class="seek" min="0" max="1000" value="0" step="1" aria-label="左の再生位置" disabled>
+      <div class="times"><span class="cur">0:00.00</span><span class="dur">0:00</span></div>
+      <div class="pctl">
+        <button data-act="stepback" disabled>◀ コマ</button>
+        <button data-act="play" class="primary" disabled>▶ 再生</button>
+        <button data-act="stepfwd" disabled>コマ ▶</button>
+        <button data-act="back10" disabled>−10秒</button>
+        <button data-act="mark" disabled>基準にする</button>
+        <button data-act="fwd10" disabled>+10秒</button>
+      </div>
+      <div class="markinfo"><div>基準 <span class="markval">なし</span></div><div class="fpsrow">1コマ<select class="fps" aria-label="左のフレームレート"><option value="30">30fps</option><option value="60">60fps</option><option value="120">120fps</option><option value="240">240fps</option></select></div></div>
+    </section>
+
+    <section class="pane" data-side="右">
+      <div class="pane-head">
+        <h2>右</h2>
+        <label class="filebtn">動画を選ぶ<input type="file" accept="video/*"></label>
+      </div>
+      <div class="stage empty"><video playsinline webkit-playsinline muted preload="auto"></video><div class="empty-note">動画を選んでください</div><div class="rate-badge" hidden>1x</div></div>
+      <input type="range" class="seek" min="0" max="1000" value="0" step="1" aria-label="右の再生位置" disabled>
+      <div class="times"><span class="cur">0:00.00</span><span class="dur">0:00</span></div>
+      <div class="pctl">
+        <button data-act="stepback" disabled>◀ コマ</button>
+        <button data-act="play" class="primary" disabled>▶ 再生</button>
+        <button data-act="stepfwd" disabled>コマ ▶</button>
+        <button data-act="back10" disabled>−10秒</button>
+        <button data-act="mark" disabled>基準にする</button>
+        <button data-act="fwd10" disabled>+10秒</button>
+      </div>
+      <div class="markinfo"><div>基準 <span class="markval">なし</span></div><div class="fpsrow">1コマ<select class="fps" aria-label="右のフレームレート"><option value="30">30fps</option><option value="60">60fps</option><option value="120">120fps</option><option value="240">240fps</option></select></div></div>
+    </section>
+  </div>
+
+  <section class="master">
+    <h2>左右いっしょに操作</h2>
+    <div class="grid2">
+      <button id="mPlay" class="primary" disabled>▶ 同時に再生</button>
+      <button id="mAlign" disabled>基準から同時に再生</button>
+    </div>
+    <div>
+      <span class="label">速度</span>
+      <div class="grid4" id="rates">
+        <button data-rate="0.25">0.25x</button>
+        <button data-rate="0.5">0.5x</button>
+        <button data-rate="1" class="on">1x</button>
+        <button data-rate="2">2x</button>
+      </div>
+    </div>
+    <div class="grid4">
+      <button id="mStepBack" disabled>◀ コマ</button>
+      <button id="mStepFwd" disabled>コマ ▶</button>
+      <button id="mBack10" disabled>−10秒</button>
+      <button id="mFwd10" disabled>+10秒</button>
+    </div>
+    <div class="grid2">
+      <button id="mHead" disabled>両方を先頭へ</button>
+      <button id="mShot" disabled>並べてスクショ</button>
+    </div>
+    <div>
+      <span class="label">連続写真（基準があれば基準から、なければ今の位置から）</span>
+      <div class="seqrow">
+        <select id="seqN" aria-label="枚数"><option value="12" selected>12枚</option><option value="14">14枚</option><option value="16">16枚</option><option value="18">18枚</option><option value="20">20枚</option><option value="22">22枚</option><option value="24">24枚</option><option value="26">26枚</option><option value="28">28枚</option><option value="30">30枚</option></select>
+        <select id="seqStep" aria-label="間隔"><option value="0">毎コマ</option><option value="0.1" selected>0.1秒ごと</option><option value="0.2">0.2秒ごと</option><option value="0.5">0.5秒ごと</option></select>
+        <button id="mSeq" class="primary" disabled>連続写真を撮る</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="master">
+    <div class="shots-head">
+      <h2>スクショ</h2>
+      <span>「写真アプリに保存」ボタンか、画像の長押しで保存できます</span>
+    </div>
+    <p class="noshots" id="noshots">まだありません。「並べてスクショ」で、左右の今の画面が1枚になります。</p>
+    <div class="shots" id="shots"></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var masterRate = 1, MAX_SHOTS = 12, shotUrls = [], seqBusy = false;
+
+  function fmt(t, cs) {
+    if (!isFinite(t) || t < 0) t = 0;
+    var s = Math.floor(t), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    var out = (h > 0 ? h + ":" + (m < 10 ? "0" : "") + m : "" + m) + ":" + (r < 10 ? "0" : "") + r;
+    if (cs) { var c = Math.floor((t - s) * 100); out += "." + (c < 10 ? "0" : "") + c; }
+    return out;
+  }
+
+  function Pane(el) {
+    var self = this;
+    this.el = el;
+    this.side = el.getAttribute("data-side");
+    this.video = el.querySelector("video");
+    this.video.muted = true;
+    this.stage = el.querySelector(".stage");
+    this.note = el.querySelector(".empty-note");
+    this.badge = el.querySelector(".rate-badge");
+    this.seek = el.querySelector(".seek");
+    this.cur = el.querySelector(".cur");
+    this.dur = el.querySelector(".dur");
+    this.fps = el.querySelector(".fps");
+    this.markval = el.querySelector(".markval");
+    this.btn = {};
+    el.querySelectorAll("button[data-act]").forEach(function (b) { self.btn[b.getAttribute("data-act")] = b; });
+    this.url = null; this.mark = null; this.loaded = false; this.dragging = false;
+
+    el.querySelector('input[type=file]').addEventListener("change", function (e) {
+      var f = e.target.files && e.target.files[0];
+      if (!f) return;
+      if (self.url) URL.revokeObjectURL(self.url);
+      self.url = URL.createObjectURL(f);
+      self.video.src = self.url;
+      self.video.load();
+      self.mark = null; self.markval.textContent = "なし";
+      self.btn.mark.classList.remove("on");
+      self.seek.value = 0; self.cur.textContent = fmt(0, true);
+      self.setLoaded(true);
+      self.applyRate();
+      self.updatePlayLabel();
+      refreshMaster();
+    });
+    function syncTime() {
+      self.cur.textContent = fmt(self.video.currentTime, true);
+      if (!self.dragging && self.video.duration) self.seek.value = Math.round(self.video.currentTime / self.video.duration * 1000);
+    }
+    this.video.addEventListener("loadedmetadata", function () {
+      self.dur.textContent = fmt(self.video.duration);
+      if (self.video.videoWidth) self.stage.style.aspectRatio = self.video.videoWidth + " / " + self.video.videoHeight;
+      self.applyRate();
+    });
+    this.video.addEventListener("timeupdate", syncTime);
+    this.video.addEventListener("seeked", syncTime);
+    ["play", "pause", "ended"].forEach(function (ev) {
+      self.video.addEventListener(ev, function () { self.updatePlayLabel(); refreshMaster(); });
+    });
+    this.seek.addEventListener("input", function () {
+      self.dragging = true;
+      if (self.video.duration) self.video.currentTime = self.seek.value / 1000 * self.video.duration;
+    });
+    this.seek.addEventListener("change", function () { self.dragging = false; });
+    this.stage.addEventListener("click", function () { if (self.loaded) self.toggle(); });
+    this.btn.play.addEventListener("click", function () { self.toggle(); });
+    this.btn.stepback.addEventListener("click", function () { self.step(-1); });
+    this.btn.stepfwd.addEventListener("click", function () { self.step(1); });
+    this.btn.back10.addEventListener("click", function () { self.skip(-10); });
+    this.btn.fwd10.addEventListener("click", function () { self.skip(10); });
+    this.btn.mark.addEventListener("click", function () {
+      self.mark = self.video.currentTime;
+      self.markval.textContent = fmt(self.mark, true);
+      self.btn.mark.classList.add("on");
+      refreshMaster();
+    });
+  }
+  Pane.prototype.setLoaded = function (on) {
+    this.loaded = on;
+    this.seek.disabled = !on;
+    for (var k in this.btn) this.btn[k].disabled = !on;
+    this.stage.classList.toggle("empty", !on);
+    this.note.hidden = on;
+  };
+  Pane.prototype.applyRate = function () {
+    this.video.defaultPlaybackRate = masterRate;
+    this.video.playbackRate = masterRate;
+    this.badge.hidden = masterRate === 1 || !this.loaded;
+    this.badge.textContent = masterRate + "x";
+  };
+  Pane.prototype.updatePlayLabel = function () {
+    this.btn.play.textContent = this.video.paused ? "▶ 再生" : "❚❚ 停止";
+  };
+  Pane.prototype.play = function () { var p = this.video.play(); if (p && p.catch) p.catch(function () {}); };
+  Pane.prototype.toggle = function () { if (this.video.paused) this.play(); else this.video.pause(); };
+  Pane.prototype.seekTo = function (t) {
+    var max = isFinite(this.video.duration) ? this.video.duration : t;
+    this.video.currentTime = Math.max(0, Math.min(max, t));
+  };
+  Pane.prototype.skip = function (d) { this.seekTo(this.video.currentTime + d); };
+  Pane.prototype.step = function (n) {
+    this.video.pause();
+    var fps = parseInt(this.fps.value, 10) || 30;
+    var idx = Math.floor(this.video.currentTime * fps + 1e-3);
+    this.seekTo((idx + n + 0.5) / fps);
+  };
+
+  var panes = Array.prototype.map.call(document.querySelectorAll(".pane"), function (el) { return new Pane(el); });
+  function loadedPanes() { return panes.filter(function (p) { return p.loaded; }); }
+
+  var mPlay = $("mPlay"), mAlign = $("mAlign"), mStepBack = $("mStepBack"), mStepFwd = $("mStepFwd");
+  var mBack10 = $("mBack10"), mFwd10 = $("mFwd10"), mHead = $("mHead"), mShot = $("mShot"), mSeq = $("mSeq");
+  var rateBtns = Array.prototype.slice.call(document.querySelectorAll("#rates button"));
+  var shots = $("shots"), noshots = $("noshots");
+
+  var dl = null;
+  try {
+    if (window.claude && window.claude.use) {
+      window.claude.use("downloads").then(function (d) { dl = d; }, function () {});
+    } else if (navigator.share && navigator.canShare) {
+      dl = { save: function (r) {
+        var f = new File([r.data], r.filename, { type: "image/jpeg" });
+        if (!navigator.canShare({ files: [f] })) return Promise.reject({ code: "unavailable" });
+        return navigator.share({ files: [f] }).then(function () { return { status: "saved" }; },
+          function (e) { throw { code: e && e.name === "AbortError" ? "declined" : "unavailable" }; });
+      } };
+    }
+  } catch (e) {}
+  function attachSave(fig, blob) {
+    if (!dl) return;
+    var b = document.createElement("button");
+    b.className = "primary savebtn";
+    b.textContent = "写真アプリに保存";
+    b.addEventListener("click", function () {
+      dl.save({ filename: "clip-" + Date.now() + ".jpg", data: blob }).then(function () {
+        b.textContent = "保存しました";
+      }, function (err) {
+        if (err && err.code === "declined") return;
+        b.textContent = "保存できませんでした（画像の長押しを試してください）";
+      });
+    });
+    fig.appendChild(b);
+  }
+
+  function refreshMaster() {
+    var L = loadedPanes(), any = L.length > 0;
+    [mPlay, mStepBack, mStepFwd, mBack10, mFwd10, mHead, mShot].forEach(function (b) { b.disabled = !any; });
+    mSeq.disabled = !any || seqBusy;
+    mAlign.disabled = !L.some(function (p) { return p.mark !== null; });
+    var playing = L.some(function (p) { return !p.video.paused; });
+    mPlay.textContent = playing ? "❚❚ 同時に停止" : "▶ 同時に再生";
+  }
+
+  mPlay.addEventListener("click", function () {
+    var L = loadedPanes();
+    var playing = L.some(function (p) { return !p.video.paused; });
+    L.forEach(function (p) { if (playing) p.video.pause(); else p.play(); });
+  });
+  mAlign.addEventListener("click", function () {
+    loadedPanes().forEach(function (p) { p.seekTo(p.mark !== null ? p.mark : 0); p.play(); });
+  });
+  mStepBack.addEventListener("click", function () { loadedPanes().forEach(function (p) { p.step(-1); }); });
+  mStepFwd.addEventListener("click", function () { loadedPanes().forEach(function (p) { p.step(1); }); });
+  mBack10.addEventListener("click", function () { loadedPanes().forEach(function (p) { p.skip(-10); }); });
+  mFwd10.addEventListener("click", function () { loadedPanes().forEach(function (p) { p.skip(10); }); });
+  mHead.addEventListener("click", function () { loadedPanes().forEach(function (p) { p.video.pause(); p.seekTo(0); }); });
+
+  rateBtns.forEach(function (b) {
+    b.addEventListener("click", function () {
+      masterRate = parseFloat(b.getAttribute("data-rate"));
+      rateBtns.forEach(function (x) { x.classList.toggle("on", x === b); });
+      panes.forEach(function (p) { p.applyRate(); });
+    });
+  });
+
+  mShot.addEventListener("click", function () {
+    var L = loadedPanes().filter(function (p) { return p.video.videoWidth; });
+    if (!L.length) return;
+    var H = Math.min(1080, Math.max.apply(null, L.map(function (p) { return p.video.videoHeight; })));
+    var gap = 8, widths = L.map(function (p) { return Math.round(p.video.videoWidth * H / p.video.videoHeight); });
+    var W = widths.reduce(function (a, b) { return a + b; }, 0) + gap * (L.length - 1);
+    var c = document.createElement("canvas"); c.width = W; c.height = H;
+    var ctx = c.getContext("2d");
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, W, H);
+    var x = 0, caption = [];
+    L.forEach(function (p, i) {
+      ctx.drawImage(p.video, x, 0, widths[i], H);
+      x += widths[i] + gap;
+      caption.push(p.side + " " + fmt(p.video.currentTime, true));
+    });
+    c.toBlob(function (blob) {
+      if (!blob) return;
+      var url = URL.createObjectURL(blob);
+      shotUrls.unshift(url);
+      var fig = document.createElement("figure"); fig.className = "shot";
+      var img = document.createElement("img"); img.src = url; img.alt = caption.join(" / ");
+      var cap = document.createElement("figcaption"); cap.textContent = caption.join("　");
+      fig.appendChild(img); fig.appendChild(cap);
+      attachSave(fig, blob);
+      shots.insertBefore(fig, shots.firstChild);
+      noshots.hidden = true;
+      while (shots.children.length > MAX_SHOTS) { shots.removeChild(shots.lastChild); URL.revokeObjectURL(shotUrls.pop()); }
+    }, "image/jpeg", 0.92);
+  });
+
+  var seqN = $("seqN"), seqStep = $("seqStep");
+
+  function seekWait(v, t) {
+    return new Promise(function (resolve) {
+      var done = false;
+      function fin() {
+        if (done) return; done = true;
+        v.removeEventListener("seeked", fin);
+        requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+      }
+      v.addEventListener("seeked", fin);
+      setTimeout(fin, 2000);
+      if (Math.abs(v.currentTime - t) < 0.001) fin(); else v.currentTime = t;
+    });
+  }
+
+  function addSheet(canvas, caption) {
+    canvas.toBlob(function (blob) {
+      if (!blob) return;
+      var url = URL.createObjectURL(blob);
+      shotUrls.unshift(url);
+      var fig = document.createElement("figure"); fig.className = "shot wide";
+      var img = document.createElement("img"); img.src = url; img.alt = caption;
+      var cap = document.createElement("figcaption"); cap.textContent = caption;
+      fig.appendChild(img); fig.appendChild(cap);
+      attachSave(fig, blob);
+      shots.insertBefore(fig, shots.firstChild);
+      noshots.hidden = true;
+      while (shots.children.length > MAX_SHOTS) { shots.removeChild(shots.lastChild); URL.revokeObjectURL(shotUrls.pop()); }
+      fig.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }, "image/jpeg", 0.9);
+  }
+
+  mSeq.addEventListener("click", async function () {
+    var L = loadedPanes().filter(function (p) { return p.video.videoWidth; });
+    if (!L.length || seqBusy) return;
+    seqBusy = true; mSeq.disabled = true;
+    var label = "連続写真を撮る";
+    var N = parseInt(seqN.value, 10), stepSel = parseFloat(seqStep.value);
+    var cellH = 300;
+    var saved = L.map(function (p) { return p.video.currentTime; });
+    var rows = [];
+    try {
+      for (var pi = 0; pi < L.length; pi++) {
+        var p = L[pi]; p.video.pause();
+        var fps = parseInt(p.fps.value, 10) || 30;
+        var interval = stepSel > 0 ? stepSel : 1 / fps;
+        var start = p.mark !== null ? p.mark : p.video.currentTime;
+        var w = Math.round(p.video.videoWidth * cellH / p.video.videoHeight);
+        var frames = [];
+        for (var i = 0; i < N; i++) {
+          var t = stepSel > 0 ? start + i * interval : (Math.floor(start * fps + 1e-3) + i + 0.5) / fps;
+          if (isFinite(p.video.duration) && t > p.video.duration - 0.02) break;
+          mSeq.textContent = p.side + " " + (i + 1) + "/" + N + " 撮影中…";
+          await seekWait(p.video, t);
+          var c = document.createElement("canvas"); c.width = w; c.height = cellH;
+          var cx = c.getContext("2d");
+          cx.drawImage(p.video, 0, 0, w, cellH);
+          var txt = p.side + " +" + (i * interval).toFixed(2) + "s";
+          cx.font = "bold 16px sans-serif";
+          var tw = cx.measureText(txt).width + 12;
+          cx.fillStyle = "rgba(0,0,0,.6)"; cx.fillRect(0, 0, tw, 24);
+          cx.fillStyle = "#fff"; cx.textBaseline = "middle"; cx.fillText(txt, 6, 12);
+          frames.push(c);
+        }
+        rows.push({ w: w, frames: frames });
+      }
+      var maxN = Math.max.apply(null, rows.map(function (r) { return r.frames.length; }));
+      if (maxN > 0) {
+        var rowsEach = Math.ceil(N / 6), cols = Math.ceil(N / rowsEach);
+        cols = Math.min(cols, maxN);
+        var rowsPer = Math.ceil(maxN / cols);
+        var cellW = Math.max.apply(null, rows.map(function (r) { return r.w; }));
+        var sheet = document.createElement("canvas");
+        sheet.width = cols * cellW; sheet.height = rows.length * rowsPer * cellH;
+        var sx = sheet.getContext("2d");
+        sx.fillStyle = "#000"; sx.fillRect(0, 0, sheet.width, sheet.height);
+        rows.forEach(function (r, ri) {
+          r.frames.forEach(function (f, k) {
+            var col = k % cols, row = ri * rowsPer + Math.floor(k / cols);
+            sx.drawImage(f, col * cellW + (cellW - r.w) / 2, row * cellH);
+          });
+        });
+        addSheet(sheet, "連続写真 " + maxN + "枚 / " + (stepSel > 0 ? stepSel + "秒ごと" : "毎コマ"));
+      }
+    } finally {
+      L.forEach(function (p, k) { p.seekTo(saved[k]); });
+      seqBusy = false;
+      mSeq.textContent = label;
+      refreshMaster();
+    }
+  });
+
+  var layoutBtn = $("layoutBtn"), panesEl = $("panes");
+  layoutBtn.addEventListener("click", function () {
+    var stacked = panesEl.classList.toggle("stack");
+    layoutBtn.textContent = stacked ? "左右に並べる" : "動画を大きく（上下に並べる）";
+  });
+
+  refreshMaster();
+})();
+</script>
+
+</body></html>
